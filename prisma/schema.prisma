@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  OPERATOR
+}
+
+enum DeliveryStatus {
+  BOOKED
+  ASSIGNED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum LedgerType {
+  REWARD
+  PENALTY
+}
+
+enum DispatchStatus {
+  SUCCESS
+  FAILED
+}
+
+// ==========================================
+// USER
+// ==========================================
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  phone        String?
+  role         UserRole @default(OPERATOR)
+  isActive     Boolean  @default(true)
+
+  courier    Courier?
+  deliveries Delivery[] @relation("CreatedDeliveries")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
+  @@index([isActive])
+  @@map("users")
+}
+
+// ==========================================
+// COURIER
+// ==========================================
+
+model Courier {
+  id String @id @default(uuid())
+
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  name  String
+  phone String  @unique
+  email String?
+
+  serviceAreas String[] @default([])
+
+  pricePerDelivery Decimal @db.Decimal(10, 2)
+  rating           Decimal @default(0) @db.Decimal(3, 2)
+
+  isAvailable Boolean @default(true)
+  isActive    Boolean @default(true)
+
+  totalDeliveries      Int @default(0)
+  successfulDeliveries Int @default(0)
+
+  rewards   Decimal @default(0) @db.Decimal(12, 2)
+  penalties Decimal @default(0) @db.Decimal(12, 2)
+
+  deliveries    Delivery[]
+  ledgerEntries CourierLedger[]
+  dispatchLogs  DispatchLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isAvailable, isActive])
+  @@index([rating])
+  @@map("couriers")
+}
+
+// ==========================================
+// DELIVERY
+// ==========================================
+
+model Delivery {
+  id         String @id @default(uuid())
+  trackingId String @unique
+
+  // Customer details
+  customerName  String
+  customerPhone String
+
+  // Pickup details
+  pickupAddress String
+  pickupArea    String
+
+  // Destination details
+  destinationAddress String
+  destinationArea    String
+
+  // Package details
+  packageDescription String
+  packageWeight      Decimal @db.Decimal(10, 2)
+
+  // Financial details
+  price Decimal @db.Decimal(10, 2)
+
+  // Delivery lifecycle
+  status DeliveryStatus @default(BOOKED)
+
+  // Courier assignment
+  courierId String?
+  courier   Courier? @relation(fields: [courierId], references: [id], onDelete: SetNull)
+
+  // Scheduling
+  scheduledAt DateTime?
+  deliveredAt DateTime?
+
+  // Cancellation
+  cancellationReason String?
+
+  // Archiving
+  isArchived Boolean @default(false)
+
+  // User who created this booking
+  createdById String?
+  createdBy   User?   @relation("CreatedDeliveries", fields: [createdById], references: [id], onDelete: SetNull)
+
+  // Related records
+  trackingEvents TrackingEvent[]
+  dispatchLogs   DispatchLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, isArchived])
+  @@index([courierId])
+  @@index([createdAt])
+  @@index([customerName])
+  @@index([pickupArea])
+  @@index([destinationArea])
+  @@map("deliveries")
+}
+
+// ==========================================
+// TRACKING EVENT
+// ==========================================
+
+model TrackingEvent {
+  id String @id @default(uuid())
+
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  status      DeliveryStatus
+  description String
+
+  createdAt DateTime @default(now())
+
+  @@index([deliveryId, createdAt])
+  @@map("tracking_events")
+}
+
+// ==========================================
+// COURIER REWARDS AND PENALTIES
+// ==========================================
+
+model CourierLedger {
+  id String @id @default(uuid())
+
+  courierId String
+  courier   Courier @relation(fields: [courierId], references: [id], onDelete: Cascade)
+
+  type   LedgerType
+  amount Decimal    @db.Decimal(10, 2)
+  reason String
+
+  createdAt DateTime @default(now())
+
+  @@index([courierId, createdAt])
+  @@map("courier_ledger")
+}
+
+// ==========================================
+// DISPATCH HISTORY
+// ==========================================
+
+model DispatchLog {
+  id String @id @default(uuid())
+
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  courierId String?
+  courier   Courier? @relation(fields: [courierId], references: [id], onDelete: SetNull)
+
+  status               DispatchStatus
+  selectionReason      String?
+  eligibleCourierCount Int            @default(0)
+
+  // Stores the ranking and selection information.
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([deliveryId, createdAt])
+  @@index([courierId])
+  @@map("dispatch_logs")
+}
