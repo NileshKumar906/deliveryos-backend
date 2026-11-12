@@ -45,6 +45,8 @@ const loginSchema = z.object({
     .string()
     .min(1, "Password is required")
     .max(72, "Invalid password"),
+
+  accountType: z.enum(["ADMIN", "CUSTOMER"]),
 }).strict();
 
 module.exports = {

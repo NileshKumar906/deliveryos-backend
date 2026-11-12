@@ -1,6 +1,10 @@
 
 const service = require("./delivery.service");
 
+// ========================================
+// CREATE DELIVERY
+// ========================================
+
 exports.create = async (req, res) => {
   const delivery = await service.createDelivery(
     req.validatedBody,
@@ -14,20 +18,57 @@ exports.create = async (req, res) => {
   });
 };
 
+// ========================================
+// GET ALL DELIVERIES
+// ========================================
+
 exports.getAll = async (req, res) => {
-  const result = await service.getDeliveries(req.query);
-  res.json({ success: true, data: result });
+  const result = await service.getDeliveries(
+    req.query,
+    req.user
+  );
+
+  res.json({
+    success: true,
+    data: result,
+  });
 };
+
+// ========================================
+// GET SINGLE DELIVERY
+// ========================================
 
 exports.getOne = async (req, res) => {
-  const delivery = await service.getDeliveryById(req.params.id);
-  res.json({ success: true, data: { delivery } });
+  const delivery = await service.getDeliveryById(
+    req.params.id,
+    req.user
+  );
+
+  res.json({
+    success: true,
+    data: { delivery },
+  });
 };
 
+// ========================================
+// TRACK DELIVERY
+// ========================================
+
 exports.track = async (req, res) => {
-  const delivery = await service.getByTrackingId(req.params.trackingId);
-  res.json({ success: true, data: { delivery } });
+  const delivery = await service.getByTrackingId(
+    req.params.trackingId,
+    req.user
+  );
+
+  res.json({
+    success: true,
+    data: { delivery },
+  });
 };
+
+// ========================================
+// UPDATE DELIVERY STATUS
+// ========================================
 
 exports.updateStatus = async (req, res) => {
   const delivery = await service.updateDeliveryStatus(
@@ -41,6 +82,10 @@ exports.updateStatus = async (req, res) => {
     data: { delivery },
   });
 };
+
+// ========================================
+// ARCHIVE DELIVERY
+// ========================================
 
 exports.archive = async (req, res) => {
   const delivery = await service.archiveDelivery(

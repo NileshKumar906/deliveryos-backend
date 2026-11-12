@@ -1,5 +1,6 @@
 
 const crypto = require("crypto");
+
 const prisma = require("../../config/database");
 const AppError = require("../../utils/AppError");
 
@@ -15,6 +16,26 @@ const allowedTransitions = {
   DELIVERED: [],
   CANCELLED: [],
 };
+
+// ========================================
+// ACCESS CONTROL HELPER
+// ========================================
+
+function getOwnershipFilter(user) {
+  if (!user) {
+    throw new AppError("Authentication required", 401);
+  }
+
+  if (user.role === "CUSTOMER") {
+    return { createdById: user.id };
+  }
+
+  return {};
+}
+
+// ========================================
+// CREATE DELIVERY
+// ========================================
 
 async function createDelivery(data, userId) {
   return prisma.$transaction(async (tx) => {
@@ -32,25 +53,53 @@ async function createDelivery(data, userId) {
           },
         },
       },
-      include: { trackingEvents: true },
+      include: {
+        trackingEvents: true,
+      },
     });
 
     return delivery;
   });
 }
 
-async function getDeliveries({ page = 1, limit = 10, status, search }) {
+// ========================================
+// GET ALL DELIVERIES
+// ========================================
+
+async function getDeliveries(params, user) {
+  let {
+    page = 1,
+    limit = 10,
+    status,
+    search,
+  } = params;
+
   page = Math.max(1, Number(page) || 1);
   limit = Math.min(100, Math.max(1, Number(limit) || 10));
 
   const where = {
     isArchived: false,
+    ...getOwnershipFilter(user),
     ...(status && { status }),
     ...(search && {
       OR: [
-        { trackingId: { contains: search, mode: "insensitive" } },
-        { customerName: { contains: search, mode: "insensitive" } },
-        { customerPhone: { contains: search } },
+        {
+          trackingId: {
+            contains: search,
+            mode: "insensitive",
+          },
+        },
+        {
+          customerName: {
+            contains: search,
+            mode: "insensitive",
+          },
+        },
+        {
+          customerPhone: {
+            contains: search,
+          },
+        },
       ],
     }),
   };
@@ -58,11 +107,16 @@ async function getDeliveries({ page = 1, limit = 10, status, search }) {
   const [deliveries, total] = await prisma.$transaction([
     prisma.delivery.findMany({
       where,
-      include: { courier: true },
-      orderBy: { createdAt: "desc" },
+      include: {
+        courier: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
       skip: (page - 1) * limit,
       take: limit,
     }),
+
     prisma.delivery.count({ where }),
   ]);
 
@@ -77,32 +131,63 @@ async function getDeliveries({ page = 1, limit = 10, status, search }) {
   };
 }
 
-async function getDeliveryById(id) {
-  const delivery = await prisma.delivery.findUnique({
-    where: { id },
+// ========================================
+// GET DELIVERY BY ID
+// ========================================
+
+async function getDeliveryById(id, user) {
+  const delivery = await prisma.delivery.findFirst({
+    where: {
+      id,
+      ...getOwnershipFilter(user),
+    },
     include: {
       courier: true,
-      trackingEvents: { orderBy: { createdAt: "asc" } },
+      trackingEvents: {
+        orderBy: {
+          createdAt: "asc",
+        },
+      },
     },
   });
 
-  if (!delivery) throw new AppError("Delivery not found", 404);
+  if (!delivery) {
+    throw new AppError("Delivery not found", 404);
+  }
+
   return delivery;
 }
 
-async function getByTrackingId(trackingId) {
-  const delivery = await prisma.delivery.findUnique({
-    where: { trackingId },
+// ========================================
+// TRACK DELIVERY
+// ========================================
+
+async function getByTrackingId(trackingId, user) {
+  const delivery = await prisma.delivery.findFirst({
+    where: {
+      trackingId,
+      ...getOwnershipFilter(user),
+    },
     include: {
-      trackingEvents: { orderBy: { createdAt: "asc" } },
+      trackingEvents: {
+        orderBy: {
+          createdAt: "asc",
+        },
+      },
       courier: true,
     },
   });
 
-  if (!delivery) throw new AppError("Tracking ID not found", 404);
+  if (!delivery) {
+    throw new AppError("Tracking ID not found", 404);
+  }
+
   return delivery;
 }
 
+// ========================================
+// UPDATE DELIVERY STATUS
+// ========================================
 
 async function updateDeliveryStatus(id, data) {
   return prisma.$transaction(async (tx) => {
@@ -125,9 +210,11 @@ async function updateDeliveryStatus(id, data) {
       where: { id },
       data: {
         status: data.status,
+
         ...(data.status === "CANCELLED" && {
           cancellationReason: data.cancellationReason,
         }),
+
         ...(data.status === "DELIVERED" && {
           deliveredAt: new Date(),
         }),
@@ -146,18 +233,23 @@ async function updateDeliveryStatus(id, data) {
       },
     });
 
+    // Release courier after completion or cancellation.
     if (
       ["DELIVERED", "CANCELLED"].includes(data.status) &&
       delivery.courierId
     ) {
       await tx.courier.update({
-        where: { id: delivery.courierId },
+        where: {
+          id: delivery.courierId,
+        },
         data: {
           isAvailable: true,
+
           ...(data.status === "DELIVERED" && {
             totalDeliveries: { increment: 1 },
             successfulDeliveries: { increment: 1 },
           }),
+
           ...(data.status === "CANCELLED" && {
             totalDeliveries: { increment: 1 },
           }),
@@ -169,9 +261,19 @@ async function updateDeliveryStatus(id, data) {
   });
 }
 
+// ========================================
+// ARCHIVE DELIVERY
+// ========================================
 
 async function archiveDelivery(id, isArchived) {
-  await getDeliveryById(id);
+  const delivery = await prisma.delivery.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+
+  if (!delivery) {
+    throw new AppError("Delivery not found", 404);
+  }
 
   return prisma.delivery.update({
     where: { id },

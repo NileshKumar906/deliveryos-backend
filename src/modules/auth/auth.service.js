@@ -41,13 +41,15 @@ function formatUser(user) {
 }
 
 // ========================================
-// REGISTER USER
+// REGISTER CUSTOMER
 // ========================================
 
 async function registerUser(data) {
+  const email = data.email.trim().toLowerCase();
+
   const existingUser = await prisma.user.findUnique({
     where: {
-      email: data.email,
+      email,
     },
   });
 
@@ -64,13 +66,16 @@ async function registerUser(data) {
     const user = await prisma.user.create({
       data: {
         name: data.name,
-        email: data.email,
+        email,
         passwordHash,
         phone: data.phone,
-
-        // Never accept a public registration role from the client.
-        role: "OPERATOR",
+        role: "CUSTOMER",
       },
+    });
+
+    console.log("[AUTH REGISTER] Customer created:", {
+      email: user.email,
+      role: user.role,
     });
 
     const token = generateToken(user);
@@ -80,7 +85,6 @@ async function registerUser(data) {
       token,
     };
   } catch (error) {
-    // Handle concurrent registration attempts.
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
@@ -97,37 +101,95 @@ async function registerUser(data) {
 // ========================================
 
 async function loginUser(data) {
+  const email = data.email.trim().toLowerCase();
+
+  // Find user
   const user = await prisma.user.findUnique({
     where: {
-      email: data.email,
+      email,
     },
   });
 
-  // Use the same message for unknown emails and wrong passwords.
+  // ========================================
+  // DEBUG: USER LOOKUP
+  // ========================================
+
+  console.log("[AUTH LOGIN] Email:", email);
+  console.log("[AUTH LOGIN] User found:", !!user);
+
+  if (user) {
+    console.log("[AUTH LOGIN] Stored role:", user.role);
+    console.log("[AUTH LOGIN] Account active:", user.isActive);
+  }
+
   if (!user) {
     throw new AppError("Invalid email or password", 401);
   }
+
+  // ========================================
+  // VERIFY PASSWORD
+  // ========================================
 
   const passwordMatches = await bcrypt.compare(
     data.password,
     user.passwordHash
   );
 
+  // ========================================
+  // DEBUG: PASSWORD VERIFICATION
+  // ========================================
+
+  console.log("[AUTH LOGIN] Password matches:", passwordMatches);
+
   if (!passwordMatches) {
     throw new AppError("Invalid email or password", 401);
   }
+
+  // ========================================
+  // CHECK ACCOUNT STATUS
+  // ========================================
 
   if (!user.isActive) {
     throw new AppError("Your account has been deactivated", 403);
   }
 
+  // ========================================
+  // ROLE-BASED LOGIN VALIDATION
+  // ========================================
+
+  console.log("[AUTH LOGIN] Requested account type:", data.accountType);
+
+  if (
+    data.accountType === "ADMIN" &&
+    user.role !== "ADMIN"
+  ) {
+    throw new AppError("Invalid admin credentials", 403);
+  }
+
+  if (
+    data.accountType === "CUSTOMER" &&
+    user.role !== "CUSTOMER"
+  ) {
+    throw new AppError("Invalid customer credentials", 403);
+  }
+
+  // ========================================
+  // GENERATE TOKEN
+  // ========================================
+
   const token = generateToken(user);
+
+  console.log("[AUTH LOGIN] Login successful:", user.email);
 
   return {
     user: formatUser(user),
     token,
   };
 }
+
+// ========================================
+// EXPORT
+// ========================================
 
 module.exports = {
   registerUser,
